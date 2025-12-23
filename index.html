@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Drone Voxel - HD Uçuş</title>
+    <title>Drone Voxel - Düzeltilmiş Versiyon</title>
     <meta charset="UTF-8">
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
@@ -9,20 +9,22 @@
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: #0f0; font-family: monospace; font-size: 24px; text-align: center;
+            background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px;
         }
     </style>
 </head>
 <body>
-    <div id="loading">UYDU VERİLERİ YÜKLENİYOR...<br><span style="font-size:16px; color:#aaa;">(Bu işlem 10-15 saniye sürebilir)</span></div>
+    <div id="loading">DRONE SİSTEMİ BAŞLATILIYOR...<br><span style="font-size:16px; color:#aaa;">(Uydu verileri işleniyor)</span></div>
     <canvas id="screen"></canvas>
 
 <script>
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 
-// Ekran Çözünürlüğü (Performans için)
-const screenWidth = 320; 
-const screenHeight = 200;
+// --- ÇÖZÜNÜRLÜK AYARI ---
+// Daha geniş ve net görmek için çözünürlüğü biraz artırdım
+const screenWidth = 400; 
+const screenHeight = 300;
 canvas.width = screenWidth;
 canvas.height = screenHeight;
 
@@ -34,18 +36,17 @@ let loaded = false;
 
 let drone = {
     x: 512, y: 512, 
-    height: 50, 
+    height: 150, // Yükseklik artırıldı (Daha ferah görüş)
     angle: 0, 
     horizon: 100, 
     speed: 0
 };
 
-// -- RESİMLERİ YÜKLEME (GitHub'daki dosyaları okur) --
+// -- RESİMLERİ YÜKLEME --
 function loadMaps() {
     const imgColor = new Image();
     const imgHeight = new Image();
     
-    // "Cross-Origin" hatasını önlemek için önemli
     imgColor.crossOrigin = "Anonymous";
     imgHeight.crossOrigin = "Anonymous";
 
@@ -54,58 +55,50 @@ function loadMaps() {
     function onImageLoad() {
         imagesLoaded++;
         if (imagesLoaded === 2) {
-            // Resim verilerini Canvas'a aktar
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = mapSize;
             tempCanvas.height = mapSize;
             const tempCtx = tempCanvas.getContext('2d');
 
-            // 1. Renk Haritası
             tempCtx.drawImage(imgColor, 0, 0);
             colorData = tempCtx.getImageData(0, 0, mapSize, mapSize).data;
 
-            // 2. Yükseklik Haritası
             tempCtx.drawImage(imgHeight, 0, 0);
             heightData = tempCtx.getImageData(0, 0, mapSize, mapSize).data;
 
             loaded = true;
             document.getElementById('loading').style.display = 'none';
-            gameLoop(); // Oyunu Başlat
+            gameLoop();
         }
     }
 
-    // Dosya isimleri GitHub'dakilerle AYNI olmalı
     imgColor.src = 'color.png'; 
     imgHeight.src = 'height.png';
     
     imgColor.onload = onImageLoad;
     imgHeight.onload = onImageLoad;
     
-    imgColor.onerror = () => alert("HATA: 'color.png' dosyası bulunamadı veya yüklenemedi!");
-    imgHeight.onerror = () => alert("HATA: 'height.png' dosyası bulunamadı!");
+    imgColor.onerror = () => alert("HATA: Resimler GitHub'da bulunamadı!");
 }
 
-// -- KONTROLLER (MOUSE + KLAVYE) --
+// -- KONTROLLER --
 let input = { forward: false };
 
-// Mouse Hareketi
 window.onmousemove = (e) => {
-    // Ekranın ortasına göre hesapla
     let xRatio = (e.clientX / window.innerWidth - 0.5); 
     let yRatio = (e.clientY / window.innerHeight - 0.5);
 
     // Mouse Sağa/Sola -> Dönüş
-    drone.angle += xRatio * 0.15; 
+    drone.angle += xRatio * 0.1; 
     
-    // Mouse İleri/Geri -> Kafa Eğme (Horizon)
-    drone.horizon = 100 - (yRatio * 300);
+    // Mouse Yukarı/Aşağı -> Ufuk Çizgisi (DÜZELTİLDİ)
+    // Eski kodda "-" vardı, "+" yaparak tersliği düzelttik.
+    // Ayrıca hassasiyeti ayarladık.
+    drone.horizon = 150 + (yRatio * 400);
 };
 
-// Mouse Tıklama -> Gaz
 window.onmousedown = () => input.forward = true;
 window.onmouseup = () => input.forward = false;
-
-// Klavye (W tuşu)
 window.onkeydown = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = true; };
 window.onkeyup = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = false; };
 
@@ -113,37 +106,33 @@ window.onkeyup = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = fal
 function gameLoop() {
     if (!loaded) return;
 
-    // Hareket Fiziği
-    if (input.forward) drone.speed = 2.5; // Hız
-    else drone.speed *= 0.92; // Sürtünme
+    if (input.forward) drone.speed = 3; 
+    else drone.speed *= 0.92;
 
     drone.x += Math.cos(drone.angle) * drone.speed;
     drone.y += Math.sin(drone.angle) * drone.speed;
 
-    // Harita dışına çıkarsa döngü (Sonsuz dünya)
-    // Bitwise işlemler (&) performansı artırır
     let mapX = Math.floor(drone.x) & (mapSize - 1);
     let mapY = Math.floor(drone.y) & (mapSize - 1);
     let mapIndex = (mapY * mapSize + mapX) * 4;
 
-    // Yükseklik hesapla (Zemin + 50 birim)
-    // Sadece Red kanalını (r) okuyoruz
+    // Otomatik Yükseklik: Yerden 120 birim yukarıda tut (Zoom hissini azaltır)
     let groundHeight = heightData[mapIndex];
-    drone.height = groundHeight + 50; 
+    drone.height = groundHeight + 120; 
 
-    // -- RENDERING (VOXEL SPACE) --
+    // -- RENDERING --
     let imgData = ctx.createImageData(screenWidth, screenHeight);
     let buf = new Uint32Array(imgData.data.buffer);
     
-    // Gökyüzü Rengi (Açık Mavi)
     buf.fill(0xFFFFCC66); 
 
     let sinA = Math.sin(drone.angle);
     let cosA = Math.cos(drone.angle);
-    let viewDist = 800; 
+    
+    // Görüş mesafesini artırdım
+    let viewDist = 1000; 
 
     for (let i = 0; i < screenWidth; i++) {
-        // Işın atma (Raycasting)
         let deltaX = (cosA * viewDist - sinA * (i - screenWidth/2)) / viewDist;
         let deltaY = (sinA * viewDist + cosA * (i - screenWidth/2)) / viewDist;
         
@@ -151,24 +140,25 @@ function gameLoop() {
         let posY = drone.y;
         let maxH = screenHeight;
 
-        for (let z = 1; z < viewDist; z += 1.5) {
-            posX += deltaX * 1.5;
-            posY += deltaY * 1.5;
+        for (let z = 1; z < viewDist; z += 2) { // z adımını artırdım (Performans)
+            posX += deltaX * 2;
+            posY += deltaY * 2;
             
             let mX = Math.floor(posX) & (mapSize - 1);
             let mY = Math.floor(posY) & (mapSize - 1);
             let offset = (mY * mapSize + mX) * 4;
             
             let h = heightData[offset];
-            let hOnScreen = (drone.height - h) / z * 240 + drone.horizon;
+            
+            // ZOOM DÜZELTMESİ BURADA:
+            // Çarpanı 240'tan 120'ye düşürdüm. 
+            // Bu, dağları daha basık ve uzak gösterir.
+            let hOnScreen = (drone.height - h) / z * 120 + drone.horizon;
 
             if (hOnScreen < maxH) {
-                // Renk okuma (RGBA)
                 let r = colorData[offset];
                 let g = colorData[offset+1];
                 let b = colorData[offset+2];
-                
-                // ABGR formatına çevir
                 let color = (255 << 24) | (b << 16) | (g << 8) | r;
 
                 for (let y = Math.max(0, hOnScreen|0); y < maxH; y++) {
@@ -183,7 +173,6 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 
-// Başlat
 loadMaps();
 </script>
 </body>
