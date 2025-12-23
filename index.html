@@ -1,331 +1,549 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Drone Voxel - Real FPV</title>
+    <title>Voxel Space project demonstration</title>
     <meta charset="UTF-8">
+    <meta name="description" content="Demonstration of the Voxel Space technique">
+    <meta name="author" content="Sebastian Macke">
+    <meta name="keywords" content="Voxel, VoxelSpace, Voxel Space, Comanche, landscape, rendering">
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        canvas { width: 100%; height: 100vh; cursor: none; }
-        #ui {
-            position: absolute; top: 10px; left: 10px;
-            color: #0f0; font-family: monospace; font-size: 16px; font-weight: bold;
-            text-shadow: 1px 1px 0 #000; pointer-events: none;
-        }
-        #center-marker {
-            position: absolute; top: 50%; left: 50%; width: 40px; height: 40px;
-            transform: translate(-50%, -50%);
-            border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%;
-            pointer-events: none; transition: border-color 0.2s;
-        }
-        #loading {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; font-family: sans-serif; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px;
-        }
+        html, body {margin: 0; height: 100%; overflow: hidden}
+        canvas { width: 100%; height: 100%; }
+        a { color: white; }
+        #info {
+            position: absolute;
+            top: 0px;
+            width: 100%;
+            padding: 5px;
+            z-index:100;
+            color: white;
+            font-family: "Arial", Times, serif;
+            font-size: 120%;
+            }
+        #fps {
+            float: right;
+            position: absolute;
+            top: 0px;
+            right: 10px;
+            z-index:100;
+            padding: 5px;
+            color: white;
+            font-family: "Arial", Times, serif;
+            font-size: 120%;
+            }
     </style>
 </head>
-<body>
-    <div id="ui">
-        MOD: [P] | GAZ: [W]<br>
-        DURUM: FPV Modu (Dünya Dönüyor)
-    </div>
-    <div id="center-marker"></div>
-    <div id="loading">GYROSCOPE CALIBRATING...</div>
-    <canvas id="screen"></canvas>
+
+<body scroll="no">
+
+<div id="fps">
+</div>
+
+<div id="info">
+    Fly controls
+    <b>WASD</b> or <b>Cursor Keys</b> or <b>left click</b> move, <b>R|F</b> up | down, <b>Q|E</b> pitch,
+<br>
+
+<select name="Mapselector" size="1" onchange="LoadMap(this.value);" value="C1W;D1">
+<option value="C1W;D1">Map C1W</option>
+<option value="C2W;D2">Map C2W</option>
+<option value="C3;D3">Map C3</option>
+<option value="C4;D4">Map C4</option>
+<option value="C5W;D5">Map C5W</option>
+<option value="C6W;D6">Map C6W</option>
+<option value="C7W;D7">Map C7W</option>
+<option value="C8;D6">Map C8</option>
+<option value="C9W;D9">Map C9W</option>
+<option value="C10W;D10">Map C10W</option>
+<option value="C11W;D11">Map C11W</option>
+<option value="C12W;D11">Map C12W</option>
+<option value="C13;D13">Map C13</option>
+<option value="C14;D14">Map C14</option>
+<option value="C14W;D14">Map C14W</option>
+<option value="C15;D15">Map C15</option>
+<option value="C16W;D16">Map C16W</option>
+<option value="C17W;D17">Map C17W</option>
+<option value="C18W;D18">Map C18W</option>
+<option value="C19W;D19">Map C19W</option>
+<option value="C20W;D20">Map C20W</option>
+<option value="C21;D21">Map C21</option>
+<option value="C22W;D22">Map C22W</option>
+<option value="C23W;D21">Map C23W</option>
+<option value="C24W;D24">Map C24W</option>
+<option value="C25W;D25">Map C25W</option>
+<option value="C26W;D18">Map C26W</option>
+<option value="C27W;D15">Map C27W</option>
+<option value="C28W;D25">Map C28W</option>
+<option value="C29W;D16">Map C29W</option>
+</select>
+
+<label for="distancerange">Distance</label>
+<input id="distancerange" type="range" min="100" max="2000" step="1" onchange="camera.distance = this.value">
+
+<a href="https://github.com/s-macke/VoxelSpace">Github project page</a>
+
+</div>
+
+<canvas id="fullscreenCanvas" width="800" height="400">
+    Your browser does not support the canvas element.
+</canvas>
 
 <script>
-const canvas = document.getElementById('screen');
-const ctx = canvas.getContext('2d');
+"use strict";
 
-// Daha geniş bir alan çizip (overscan) döndüreceğiz ki köşeler siyah kalmasın
-const screenWidth = 480; 
-const screenHeight = 360;
-canvas.width = screenWidth;
-canvas.height = screenHeight;
+// ---------------------------------------------
+// Viewer information
 
-let mapSize = 1024;
-let colorData = null;
-let heightData = null;
-let loaded = false;
-let cameraMode = 3; 
-
-// --- FİZİK ---
-let drone = {
-    x: 512, y: 512, 
-    height: 150, 
-    angle: 0, 
-    horizon: 120,    
-    speed: 0,
-    maxSpeed: 6.0,   // Biraz daha hızlı
-    acceleration: 0.2,
-    friction: 0.98,  // Daha çok kayma (Drift)
-    roll: 0,         
-    pitch: 0         
+var camera =
+{
+    x:        512., // x position on the map
+    y:        800., // y position on the map
+    height:    78., // height of the camera
+    angle:      0., // direction of the camera
+    horizon:  100., // horizon position (look up and down)
+    distance: 800   // distance of map
 };
 
-function loadMaps() {
-    const imgColor = new Image();
-    const imgHeight = new Image();
-    imgColor.crossOrigin = "Anonymous";
-    imgHeight.crossOrigin = "Anonymous";
+// ---------------------------------------------
+// Landscape data
 
-    let imagesLoaded = 0;
-    function onImageLoad() {
-        imagesLoaded++;
-        if (imagesLoaded === 2) {
-            const tCanvas = document.createElement('canvas');
-            tCanvas.width = mapSize; tCanvas.height = mapSize;
-            const tCtx = tCanvas.getContext('2d');
-            tCtx.drawImage(imgColor, 0, 0);
-            colorData = tCtx.getImageData(0, 0, mapSize, mapSize).data;
-            tCtx.drawImage(imgHeight, 0, 0);
-            heightData = tCtx.getImageData(0, 0, mapSize, mapSize).data;
-            loaded = true;
-            document.getElementById('loading').style.display = 'none';
-            gameLoop();
+var map =
+{
+    width:    1024,
+    height:   1024,
+    shift:    10,  // power of two: 2^10 = 1024
+    altitude: new Uint8Array(1024*1024), // 1024 * 1024 byte array with height information
+    color:    new Uint32Array(1024*1024) // 1024 * 1024 int array with RGB colors
+};
+
+// ---------------------------------------------
+// Screen data
+
+var screendata =
+{
+    canvas:    null,
+    context:   null,
+    imagedata: null,
+
+    bufarray:  null, // color data
+    buf8:      null, // the same array but with bytes
+    buf32:     null, // the same array but with 32-Bit words
+
+    backgroundcolor: 0xFFE09090
+};
+
+// ---------------------------------------------
+// Keyboard and mouse interaction
+
+var input =
+{
+    forwardbackward: 0,
+    leftright:       0,
+    updown:          0,
+    lookup:          false,
+    lookdown:        false,
+    mouseposition:   null,
+    keypressed:      false
+}
+
+var updaterunning = false;
+
+var time = new Date().getTime();
+
+
+// for fps display
+var timelastframe = new Date().getTime();
+var frames = 0;
+
+// Update the camera for next frame. Dependent on keypresses
+function UpdateCamera()
+{
+    var current = new Date().getTime();
+
+    input.keypressed = false;
+    if (input.leftright != 0)
+    {
+        camera.angle += input.leftright*0.1*(current-time)*0.03;
+        input.keypressed = true;
+    }
+    if (input.forwardbackward != 0)
+    {
+        camera.x -= input.forwardbackward * Math.sin(camera.angle) * (current-time)*0.03;
+        camera.y -= input.forwardbackward * Math.cos(camera.angle) * (current-time)*0.03;
+        input.keypressed = true;
+    }
+    if (input.updown != 0)
+    {
+        camera.height += input.updown * (current-time)*0.03;
+        input.keypressed = true;
+    }
+    if (input.lookup)
+    {
+        camera.horizon += 2 * (current-time)*0.03;
+        input.keypressed = true;
+    }
+    if (input.lookdown)
+    {
+        camera.horizon -= 2 * (current-time)*0.03;
+        input.keypressed = true;
+    }
+
+    // Collision detection. Don't fly below the surface.
+    var mapoffset = ((Math.floor(camera.y) & (map.width-1)) << map.shift) + (Math.floor(camera.x) & (map.height-1))|0;
+    if ((map.altitude[mapoffset]+10) > camera.height) camera.height = map.altitude[mapoffset] + 10;
+
+    time = current;
+
+}
+
+// ---------------------------------------------
+// Keyboard and mouse event handlers
+// ---------------------------------------------
+// Keyboard and mouse event handlers
+
+function GetMousePosition(e)
+{
+    // fix for Chrome
+    if (e.type.startsWith('touch'))
+    {
+        return [e.targetTouches[0].pageX, e.targetTouches[0].pageY];
+    } else
+    {
+        return [e.pageX, e.pageY];
+    }
+}
+
+
+function DetectMouseDown(e)
+{
+    input.forwardbackward = 3.;
+    input.mouseposition = GetMousePosition(e);
+    time = new Date().getTime();
+
+    if (!updaterunning) Draw();
+    return;
+}
+
+function DetectMouseUp()
+{
+    input.mouseposition = null;
+    input.forwardbackward = 0;
+    input.leftright = 0;
+    input.updown = 0;
+    return;
+}
+
+function DetectMouseMove(e)
+{
+    e.preventDefault();
+    if (input.mouseposition == null) return;
+    if (input.forwardbackward == 0) return;
+
+    var currentMousePosition = GetMousePosition(e);
+
+    input.leftright = (input.mouseposition[0] - currentMousePosition[0]) / window.innerWidth * 2;
+    camera.horizon  = 100 + (input.mouseposition[1] - currentMousePosition[1]) / window.innerHeight * 500;
+    input.updown    = (input.mouseposition[1] - currentMousePosition[1]) / window.innerHeight * 10;
+}
+
+
+function DetectKeysDown(e)
+{
+    switch(e.keyCode)
+    {
+    case 37:    // left cursor
+    case 65:    // a
+        input.leftright = +1.;
+        break;
+    case 39:    // right cursor
+    case 68:    // d
+        input.leftright = -1.;
+        break;
+    case 38:    // cursor up
+    case 87:    // w
+        input.forwardbackward = 3.;
+        break;
+    case 40:    // cursor down
+    case 83:    // s
+        input.forwardbackward = -3.;
+        break;
+    case 82:    // r
+        input.updown = +2.;
+        break;
+    case 70:    // f
+        input.updown = -2.;
+        break;
+    case 69:    // e
+        input.lookup = true;
+        break;
+    case 81:    //q
+        input.lookdown = true;
+        break;
+    default:
+        return;
+        break;
+    }
+
+    if (!updaterunning) {
+        time = new Date().getTime();
+        Draw();
+    }
+    return false;
+}
+
+function DetectKeysUp(e)
+{
+    switch(e.keyCode)
+    {
+    case 37:    // left cursor
+    case 65:    // a
+        input.leftright = 0;
+        break;
+    case 39:    // right cursor
+    case 68:    // d
+        input.leftright = 0;
+        break;
+    case 38:    // cursor up
+    case 87:    // w
+        input.forwardbackward = 0;
+        break;
+    case 40:    // cursor down
+    case 83:    // s
+        input.forwardbackward = 0;
+        break;
+    case 82:    // r
+        input.updown = 0;
+        break;
+    case 70:    // f
+        input.updown = 0;
+        break;
+    case 69:    // e
+        input.lookup = false;
+        break;
+    case 81:    //q
+        input.lookdown = false;
+        break;
+    default:
+        return;
+        break;
+    }
+    return false;
+}
+
+// ---------------------------------------------
+// Fast way to draw vertical lines
+
+function DrawVerticalLine(x, ytop, ybottom, col)
+{
+    x = x|0;
+    ytop = ytop|0;
+    ybottom = ybottom|0;
+    col = col|0;
+    var buf32 = screendata.buf32;
+    var screenwidth = screendata.canvas.width|0;
+    if (ytop < 0) ytop = 0;
+    if (ytop > ybottom) return;
+
+    // get offset on screen for the vertical line
+    var offset = ((ytop * screenwidth) + x)|0;
+    for (var k = ytop|0; k < ybottom|0; k=k+1|0)
+    {
+        buf32[offset|0] = col|0;
+        offset = offset + screenwidth|0;
+    }
+}
+
+// ---------------------------------------------
+// Basic screen handling
+
+function DrawBackground()
+{
+    var buf32 = screendata.buf32;
+    var color = screendata.backgroundcolor|0;
+    for (var i = 0; i < buf32.length; i++) buf32[i] = color|0;
+}
+
+// Show the back buffer on screen
+function Flip()
+{
+    screendata.imagedata.data.set(screendata.buf8);
+    screendata.context.putImageData(screendata.imagedata, 0, 0);
+}
+
+// ---------------------------------------------
+// The main render routine
+
+function Render()
+{
+    var mapwidthperiod = map.width - 1;
+    var mapheightperiod = map.height - 1;
+
+    var screenwidth = screendata.canvas.width|0;
+    var sinang = Math.sin(camera.angle);
+    var cosang = Math.cos(camera.angle);
+
+    var hiddeny = new Int32Array(screenwidth);
+    for(var i=0; i<screendata.canvas.width|0; i=i+1|0)
+        hiddeny[i] = screendata.canvas.height;
+
+    var deltaz = 1.;
+
+    // Draw from front to back
+    for(var z=1; z<camera.distance; z+=deltaz)
+    {
+        // 90 degree field of view
+        var plx =  -cosang * z - sinang * z;
+        var ply =   sinang * z - cosang * z;
+        var prx =   cosang * z - sinang * z;
+        var pry =  -sinang * z - cosang * z;
+
+        var dx = (prx - plx) / screenwidth;
+        var dy = (pry - ply) / screenwidth;
+        plx += camera.x;
+        ply += camera.y;
+        var invz = 1. / z * 240.;
+        for(var i=0; i<screenwidth|0; i=i+1|0)
+        {
+            var mapoffset = ((Math.floor(ply) & mapwidthperiod) << map.shift) + (Math.floor(plx) & mapheightperiod)|0;
+            var heightonscreen = (camera.height - map.altitude[mapoffset]) * invz + camera.horizon|0;
+            DrawVerticalLine(i, heightonscreen|0, hiddeny[i], map.color[mapoffset]);
+            if (heightonscreen < hiddeny[i]) hiddeny[i] = heightonscreen;
+            plx += dx;
+            ply += dy;
         }
+        deltaz += 0.005;
     }
-    imgColor.src = 'color.png'; 
-    imgHeight.src = 'height.png';
-    imgColor.onload = onImageLoad;
-    imgHeight.onload = onImageLoad;
 }
 
-let input = { forward: false, mouseX: 0, mouseY: 0 };
 
-window.onkeydown = (e) => {
-    if(e.key === 'w' || e.key === 'W') input.forward = true;
-    if(e.key === 'p' || e.key === 'P') { cameraMode++; if(cameraMode > 3) cameraMode = 1; }
-};
-window.onkeyup = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = false; };
+// ---------------------------------------------
+// Draw the next frame
 
-window.onmousemove = (e) => {
-    let xRatio = (e.clientX / window.innerWidth - 0.5); 
-    input.mouseX = xRatio; 
-    drone.angle += xRatio * 0.08; 
+function Draw()
+{
+    updaterunning = true;
+    UpdateCamera();
+    DrawBackground();
+    Render();
+    Flip();
+    frames++;
 
-    let yRatio = (e.clientY / window.innerHeight - 0.5);
-    input.mouseY = yRatio;
-    
-    // Orta nokta rengi
-    if (yRatio > -0.15 && yRatio < 0.15) {
-        document.getElementById('center-marker').style.borderColor = "#0f0"; 
-    } else {
-        document.getElementById('center-marker').style.borderColor = "#fff"; 
+    if (!input.keypressed)
+    {
+        updaterunning = false;
+    } else
+    {
+        window.requestAnimationFrame(Draw, 0);
     }
-};
-window.onmousedown = () => input.forward = true;
-window.onmouseup = () => input.forward = false;
-
-// Drone Modelini Çiz (Bu sefer ekrana sabitlenmiş değil, fiziksel hareket ediyor gibi)
-function drawDroneModel() {
-    let cx = screenWidth / 2;
-    let cy = screenHeight - 60; 
-    if (cameraMode === 2) cy = screenHeight - 100;
-
-    // FPV Modundaysak (Mod 1) Modeli çizme, sadece HUD
-    if (cameraMode === 1) return;
-
-    // Modeli çizmeden önce canvas'ı DÜZELT (Restore etme mantığı)
-    // Çünkü dünya dönüyor ama drone'un (3. şahısta) kameraya göre sabit kalması lazım
-    // Ancak gerçekçilik için drone da hafif sallanmalı.
-    
-    // Sway Effect (Sallanma): Drone dönerken hafifçe ters yöne kayar
-    let sway = drone.roll * 50; 
-    cx -= sway;
-
-    // Perspektif: Hızlanınca uzaklaş
-    let fovOffset = drone.speed * 2;
-
-    ctx.fillStyle = "#222"; 
-    // Gövdeyi çiz
-    ctx.fillRect(cx - 20, cy + fovOffset, 40, 10);
-    
-    ctx.strokeStyle = "#444"; ctx.lineWidth = 4;
-    ctx.beginPath();
-    
-    // Pitch (Eğilme) Görselleştirmesi
-    let pitchVis = drone.pitch * 20;
-    
-    ctx.moveTo(cx - 20, cy + 5 + fovOffset); ctx.lineTo(cx - 50, cy - 10 - pitchVis + fovOffset); // Sol Ön
-    ctx.moveTo(cx + 20, cy + 5 + fovOffset); ctx.lineTo(cx + 50, cy - 10 - pitchVis + fovOffset); // Sağ Ön
-    ctx.moveTo(cx - 20, cy + 5 + fovOffset); ctx.lineTo(cx - 50, cy + 20 + pitchVis + fovOffset); // Sol Arka
-    ctx.moveTo(cx + 20, cy + 5 + fovOffset); ctx.lineTo(cx + 50, cy + 20 + pitchVis + fovOffset); // Sağ Arka
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(200, 255, 255, 0.3)";
-    let r = 18; 
-    ctx.beginPath(); ctx.arc(cx - 50, cy - 10 - pitchVis + fovOffset, r, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 50, cy - 10 - pitchVis + fovOffset, r, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx - 50, cy + 20 + pitchVis + fovOffset, r, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 50, cy + 20 + pitchVis + fovOffset, r, 0, Math.PI*2); ctx.fill();
-    
-    // Işık
-    ctx.fillStyle = input.forward ? "#0f0" : "#f00"; 
-    ctx.fillRect(cx - 6, cy + 2 + fovOffset, 12, 6);
 }
 
-function gameLoop() {
-    if (!loaded) return;
+// ---------------------------------------------
+// Init routines
 
-    // --- FİZİK HESAPLAMALARI ---
-    let targetPitch = 0;
-    if (input.forward) {
-        if (drone.speed < drone.maxSpeed) drone.speed += drone.acceleration;
-        targetPitch = 0.6; // Hızlanırken öne eğil
-    } else {
-        drone.speed *= drone.friction;
-        targetPitch = -0.1; // Dururken hafif arkaya
-    }
-    
-    drone.pitch += (targetPitch - drone.pitch) * 0.1;
-    
-    // Roll (Yatış) - Mouse hareketine göre
-    let targetRoll = input.mouseX * 1.0; 
-    drone.roll += (targetRoll - drone.roll) * 0.1;
+// Util class for downloading the png
+function DownloadImagesAsync(urls) {
+    return new Promise(function(resolve, reject) {
 
-    drone.x += Math.cos(drone.angle) * drone.speed;
-    drone.y += Math.sin(drone.angle) * drone.speed;
-
-    // Zemin Takibi (Süspansiyon)
-    let mapIndex = ((Math.floor(drone.y) & (mapSize-1)) * mapSize + (Math.floor(drone.x) & (mapSize-1))) * 4;
-    let groundHeight = heightData[mapIndex];
-    drone.height += ((groundHeight + 120) - drone.height) * 0.1;
-
-    // Kamera Pitch + Manuel Bakış
-    let manualLook = 0;
-    if (input.mouseY < -0.15 || input.mouseY > 0.15) manualLook = input.mouseY * 250;
-    let targetHorizon = 120 + manualLook + (drone.pitch * 120);
-    drone.horizon += (targetHorizon - drone.horizon) * 0.1;
-
-    // --- EKRANI TEMİZLE ---
-    ctx.clearRect(0,0,screenWidth, screenHeight);
-    
-    // Arka plan rengi (Gökyüzü)
-    ctx.fillStyle = "#87CEEB";
-    ctx.fillRect(0,0,screenWidth, screenHeight);
-
-    // --- KAMERA EFEKTİ: DÜNYAYI DÖNDÜRME ---
-    // Burası en önemli kısım: Canvas'ın merkezine git, döndür, geri gel.
-    ctx.save();
-    ctx.translate(screenWidth/2, screenHeight/2);
-    
-    // ROLL EFEKTİ: Drone sağa yatarsa, dünya sola döner (-drone.roll)
-    ctx.rotate(-drone.roll);
-    
-    ctx.translate(-screenWidth/2, -screenHeight/2);
-
-    // --- VOXEL RENDERING (Dönen Dünyaya Çizim) ---
-    // Kamera Pozisyonu Ayarı
-    let renderX = drone.x;
-    let renderY = drone.y;
-    let renderHeight = drone.height;
-
-    // 3. Şahıs için kamerayı geri çekme
-    if (cameraMode === 2) { 
-        renderX -= Math.cos(drone.angle) * 300;
-        renderY -= Math.sin(drone.angle) * 300;
-        renderHeight += 200;
-    } 
-    else if (cameraMode === 3) { 
-        renderX -= Math.cos(drone.angle) * 80;
-        renderY -= Math.sin(drone.angle) * 80;
-        renderHeight += 40;
-    }
-
-    let imgData = ctx.createImageData(screenWidth, screenHeight);
-    let buf = new Uint32Array(imgData.data.buffer);
-    
-    // Buffer'ı temizlemiyoruz çünkü rotate işlemi maskeleme yapacak.
-    // Ancak getImageData/putImageData döndürmeden etkilenmez.
-    // Bu yüzden Voxel motoru için "rotate" hilesi işe yaramaz.
-    // ÇÜNKÜ: putImageData rotation'ı yok sayar.
-    
-    // ÇÖZÜM: Voxel'i çizip sonra onu döndüremeyiz.
-    // Canvas'ı döndürdük, ama putImageData pikselleri düz basar.
-    // Bu yüzden Voxel çizimini yapıp, onu bir "Görüntü" gibi çizmeliyiz? Hayır çok yavaş olur.
-    // EN İYİ HİLE: "Horizon" kayması ile Roll efekti vermek (Eski uçak oyunları gibi).
-    
-    // Maalesef HTML5 Canvas'ta piksel manipülasyonu (Voxel) ile Rotation (Canvas) uyumsuzdur.
-    // Bu yüzden "ROLL" efektini Horizon kaydırarak simüle edeceğiz.
-    
-    let sinA = Math.sin(drone.angle);
-    let cosA = Math.cos(drone.angle);
-    let viewDist = 800; 
-
-    // EKRAN TARAMA (Sütun sütun çizim)
-    for (let i = 0; i < screenWidth; i++) {
-        // ROLL HİLESİ: Sola yatınca, sol sütunların horizonu yukarı, sağınki aşağı iner.
-        // Bu, görüntünün eğildiği hissini verir.
-        let rollOffset = (i - screenWidth/2) * drone.roll; 
-        
-        let deltaX = (cosA * viewDist - sinA * (i - screenWidth/2)) / viewDist;
-        let deltaY = (sinA * viewDist + cosA * (i - screenWidth/2)) / viewDist;
-        
-        let posX = renderX; 
-        let posY = renderY;
-        let maxH = screenHeight; // Aşağıdan yukarı boyama sınırı
-
-        for (let z = 1; z < viewDist; z += 2) {
-            posX += deltaX * 2;
-            posY += deltaY * 2;
-            
-            let mX = Math.floor(posX) & (mapSize - 1);
-            let mY = Math.floor(posY) & (mapSize - 1);
-            let offset = (mY * mapSize + mX) * 4;
-            let h = heightData[offset];
-            
-            // Horizon + Roll Offset
-            let hOnScreen = (renderHeight - h) / z * 120 + drone.horizon + rollOffset;
-
-            if (hOnScreen < maxH) {
-                let r = colorData[offset];
-                let g = colorData[offset+1];
-                let b = colorData[offset+2];
-                let color = (255 << 24) | (b << 16) | (g << 8) | r;
-
-                for (let y = Math.max(0, hOnScreen|0); y < maxH; y++) {
-                    buf[y * screenWidth + i] = color;
+        var pending = urls.length;
+        var result = [];
+        if (pending === 0) {
+            resolve([]);
+            return;
+        }
+        urls.forEach(function(url, i) {
+            var image = new Image();
+            //image.addEventListener("load", function() {
+            image.onload = function() {
+                var tempcanvas = document.createElement("canvas");
+                var tempcontext = tempcanvas.getContext("2d");
+                tempcanvas.width = map.width;
+                tempcanvas.height = map.height;
+                tempcontext.drawImage(image, 0, 0, map.width, map.height);
+                result[i] = tempcontext.getImageData(0, 0, map.width, map.height).data;
+                pending--;
+                if (pending === 0) {
+                    resolve(result);
                 }
-                maxH = hOnScreen;
-            }
-        }
-    }
-    
-    // Pikselleri ekrana bas (Döndürme işlemi iptal oldu çünkü putImageData desteklemez)
-    ctx.restore(); // Rotate işlemini geri al (Kullanmadık ama temizlik için)
-    ctx.putImageData(imgData, 0, 0);
-
-    // --- HUD ve MODELİ ÇİZME ---
-    // Şimdi Canvas özelliklerini kullanarak arayüzü çizebiliriz.
-    
-    // FPV İçin Yapay Ufuk (Horizon Line)
-    if (cameraMode === 1) {
-        ctx.save();
-        ctx.translate(screenWidth/2, screenHeight/2 + (drone.pitch * 50));
-        ctx.rotate(drone.roll); // Çizgiyi döndür
-        
-        ctx.strokeStyle = "rgba(0, 255, 0, 0.7)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        // Uzun ufuk çizgisi
-        ctx.moveTo(-100, 0); ctx.lineTo(-30, 0);
-        ctx.moveTo(30, 0); ctx.lineTo(100, 0);
-        // Ortadaki nişangah
-        ctx.stroke();
-        
-        ctx.beginPath();
-        ctx.arc(0,0, 5, 0, Math.PI*2);
-        ctx.stroke();
-        
-        ctx.restore();
-    } else {
-        drawDroneModel();
-    }
-
-    requestAnimationFrame(gameLoop);
+            };
+            image.src = url;
+        });
+    });
 }
 
-loadMaps();
+function LoadMap(filenames)
+{
+    var files = filenames.split(";");
+    DownloadImagesAsync(["maps/"+files[0]+".png", "maps/"+files[1]+".png"]).then(OnLoadedImages);
+}
+
+function OnLoadedImages(result)
+{
+    var datac = result[0];
+    var datah = result[1];
+    for(var i=0; i<map.width*map.height; i++)
+    {
+        map.color[i] = 0xFF000000 | (datac[(i<<2) + 2] << 16) | (datac[(i<<2) + 1] << 8) | datac[(i<<2) + 0];
+        map.altitude[i] = datah[i<<2];
+    }
+    Draw();
+}
+
+function OnResizeWindow()
+{
+    screendata.canvas = document.getElementById('fullscreenCanvas');
+
+    var aspect = window.innerWidth / window.innerHeight;
+
+    screendata.canvas.width = window.innerWidth<800?window.innerWidth:800;
+    screendata.canvas.height = screendata.canvas.width / aspect;
+
+    if (screendata.canvas.getContext)
+    {
+        screendata.context = screendata.canvas.getContext('2d');
+        screendata.imagedata = screendata.context.createImageData(screendata.canvas.width, screendata.canvas.height);
+    }
+
+    screendata.bufarray = new ArrayBuffer(screendata.imagedata.width * screendata.imagedata.height * 4);
+    screendata.buf8     = new Uint8Array(screendata.bufarray);
+    screendata.buf32    = new Uint32Array(screendata.bufarray);
+    Draw();
+}
+
+function Init()
+{
+    for(var i=0; i<map.width*map.height; i++)
+    {
+        map.color[i] = 0xFF007050;
+        map.altitude[i] = 0;
+    }
+
+    LoadMap("C1W;D1");
+    OnResizeWindow();
+
+    // set event handlers for keyboard, mouse, touchscreen and window resize
+    var canvas = document.getElementById("fullscreenCanvas");
+    window.onkeydown    = DetectKeysDown;
+    window.onkeyup      = DetectKeysUp;
+    canvas.onmousedown  = DetectMouseDown;
+    canvas.onmouseup    = DetectMouseUp;
+    canvas.onmousemove  = DetectMouseMove;
+    canvas.ontouchstart = DetectMouseDown;
+    canvas.ontouchend   = DetectMouseUp;
+    canvas.ontouchmove  = DetectMouseMove;
+
+    window.onresize       = OnResizeWindow;
+
+    window.setInterval(function(){
+        var current = new Date().getTime();
+        document.getElementById('fps').innerText = (frames / (current-timelastframe) * 1000).toFixed(1) + " fps";
+        frames = 0;
+        timelastframe = current;
+    }, 2000);
+
+}
+
+Init();
+
 </script>
+
 </body>
-</html>
