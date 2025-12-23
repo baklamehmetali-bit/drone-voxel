@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Drone Voxel - Yağ Gibi Akış</title>
+    <title>Drone Voxel - Pro Fizik</title>
     <meta charset="UTF-8">
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
@@ -15,8 +15,7 @@
             position: absolute; top: 50%; left: 50%; width: 40px; height: 40px;
             transform: translate(-50%, -50%);
             border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%;
-            pointer-events: none;
-            transition: border-color 0.2s;
+            pointer-events: none; transition: border-color 0.2s;
         }
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -27,10 +26,10 @@
 <body>
     <div id="ui">
         MOD: [P] | GAZ: [W] | YÖN: Mouse<br>
-        DURUM: Stabilize Uçuş (Süspansiyon Aktif)
+        FİZİK: Atalet + Rüzgar Direnci + Yatış
     </div>
     <div id="center-marker"></div>
-    <div id="loading">SİSTEM BAŞLATILIYOR...</div>
+    <div id="loading">FİZİK MOTORU YÜKLENİYOR...</div>
     <canvas id="screen"></canvas>
 
 <script>
@@ -48,12 +47,17 @@ let heightData = null;
 let loaded = false;
 let cameraMode = 3; 
 
+// --- FİZİK DEĞİŞKENLERİ ---
 let drone = {
     x: 512, y: 512, 
     height: 150, 
     angle: 0, 
     horizon: 120, 
-    speed: 0
+    speed: 0,        // Anlık hız
+    maxSpeed: 4.5,   // Maksimum hız
+    acceleration: 0.1, // Hızlanma gücü (Motor torku)
+    friction: 0.96,   // Hava sürtünmesi (Kayma hissi için)
+    roll: 0          // Sağa/Sola yatış açısı
 };
 
 function loadMaps() {
@@ -69,26 +73,22 @@ function loadMaps() {
             const tCanvas = document.createElement('canvas');
             tCanvas.width = mapSize; tCanvas.height = mapSize;
             const tCtx = tCanvas.getContext('2d');
-
             tCtx.drawImage(imgColor, 0, 0);
             colorData = tCtx.getImageData(0, 0, mapSize, mapSize).data;
-
             tCtx.drawImage(imgHeight, 0, 0);
             heightData = tCtx.getImageData(0, 0, mapSize, mapSize).data;
-
             loaded = true;
             document.getElementById('loading').style.display = 'none';
             gameLoop();
         }
     }
-
     imgColor.src = 'color.png'; 
     imgHeight.src = 'height.png';
     imgColor.onload = onImageLoad;
     imgHeight.onload = onImageLoad;
 }
 
-let input = { forward: false };
+let input = { forward: false, mouseX: 0 };
 
 window.onkeydown = (e) => {
     if(e.key === 'w' || e.key === 'W') input.forward = true;
@@ -97,20 +97,24 @@ window.onkeydown = (e) => {
 window.onkeyup = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = false; };
 
 window.onmousemove = (e) => {
+    // Mouse hareketini kaydet (Yatış efekti için lazım)
     let xRatio = (e.clientX / window.innerWidth - 0.5); 
-    drone.angle += xRatio * 0.1; 
+    input.mouseX = xRatio; // Ne kadar sert çeviriyorsun?
+    
+    drone.angle += xRatio * 0.08; // Dönüş
 
     let yRatio = (e.clientY / window.innerHeight - 0.5);
-    // Ölü Bölge (Deadzone) - Mouse ortadaysa kilitler
+    // Deadzone (Ölü Bölge)
     if (yRatio > -0.15 && yRatio < 0.15) {
-        drone.horizon = 120; 
+        // Serbest bırakınca yavaşça merkeze dön
+        drone.horizon += (120 - drone.horizon) * 0.1;
         document.getElementById('center-marker').style.borderColor = "#0f0"; 
     } else {
-        drone.horizon = 120 + (yRatio * 200);
+        let targetHorizon = 120 + (yRatio * 250);
+        drone.horizon += (targetHorizon - drone.horizon) * 0.1; // Yumuşak bakış
         document.getElementById('center-marker').style.borderColor = "#fff"; 
     }
 };
-
 window.onmousedown = () => input.forward = true;
 window.onmouseup = () => input.forward = false;
 
@@ -119,52 +123,82 @@ function drawDroneModel() {
     let cy = screenHeight - 60; 
     if (cameraMode === 2) cy = screenHeight - 100;
 
-    ctx.fillStyle = "#333"; ctx.fillRect(cx - 20, cy, 40, 10);
+    ctx.save(); // Çizim ayarlarını kaydet
     
-    ctx.strokeStyle = "#555"; ctx.lineWidth = 4;
+    // --- YATIŞ EFEKTİ (BANKING) ---
+    // Drone dönerken gövdesi yana yatar
+    ctx.translate(cx, cy); // Dönme merkezini drone'un ortasına taşı
+    ctx.rotate(drone.roll); // Gövdeyi döndür
+    ctx.translate(-cx, -cy); // Geri taşı
+
+    // Gövde
+    ctx.fillStyle = "#222"; 
+    // Hızlanınca burun aşağı eğilir (Perspektif hilesi: Yüksekliği daralt)
+    let bodyHeight = 10 - (drone.speed * 1.5); 
+    ctx.fillRect(cx - 20, cy, 40, bodyHeight);
+    
+    // Kollar
+    ctx.strokeStyle = "#444"; ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(cx - 20, cy + 5); ctx.lineTo(cx - 40, cy - 10);
-    ctx.moveTo(cx + 20, cy + 5); ctx.lineTo(cx + 40, cy - 10); 
-    ctx.moveTo(cx - 20, cy + 5); ctx.lineTo(cx - 40, cy + 20); 
-    ctx.moveTo(cx + 20, cy + 5); ctx.lineTo(cx + 40, cy + 20); 
+    ctx.moveTo(cx - 20, cy + 5); ctx.lineTo(cx - 45, cy - 10);
+    ctx.moveTo(cx + 20, cy + 5); ctx.lineTo(cx + 45, cy - 10); 
+    ctx.moveTo(cx - 20, cy + 5); ctx.lineTo(cx - 45, cy + 20); 
+    ctx.moveTo(cx + 20, cy + 5); ctx.lineTo(cx + 45, cy + 20); 
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(200, 255, 255, 0.5)";
-    let r = 14; 
-    // Pervaneler dönerken hafif bulanıklaşsın
-    ctx.beginPath(); ctx.arc(cx - 40, cy - 10, r, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 40, cy - 10, r, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx - 40, cy + 20, r, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 40, cy + 20, r, 0, Math.PI*2); ctx.fill();
+    // Pervaneler (Dönüş hızı gaza bağlı)
+    ctx.fillStyle = "rgba(200, 255, 255, 0.4)";
+    let r = 16; 
+    ctx.beginPath(); ctx.arc(cx - 45, cy - 10, r, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 45, cy - 10, r, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx - 45, cy + 20, r, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 45, cy + 20, r, 0, Math.PI*2); ctx.fill();
     
-    ctx.fillStyle = input.forward ? "#0f0" : "#f00"; 
-    ctx.fillRect(cx - 5, cy + 2, 10, 6);
+    // Arka Işık (Stop Lambası)
+    ctx.fillStyle = input.forward ? "#0f0" : "#f00"; // Gazlayınca yeşil
+    ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle;
+    ctx.fillRect(cx - 6, cy + 2, 12, 6);
+    ctx.shadowBlur = 0;
+
+    ctx.restore(); // Çizim ayarlarını eski haline getir
 }
 
 function gameLoop() {
     if (!loaded) return;
 
-    if (input.forward) drone.speed = 3; else drone.speed *= 0.92;
+    // --- GELİŞMİŞ HAREKET FİZİĞİ ---
     
+    // 1. İvmelenme (Hız anında artmaz, yavaş yavaş artar)
+    if (input.forward) {
+        if (drone.speed < drone.maxSpeed) {
+            drone.speed += drone.acceleration;
+        }
+    }
+    
+    // 2. Sürtünme (Gazı bırakınca kayarak durur)
+    drone.speed *= drone.friction;
+
+    // 3. Yatış Hesaplama (Mouse hareketine göre drone yana yatar)
+    // input.mouseX değerini kullanarak yatış açısını (roll) hedefle
+    let targetRoll = input.mouseX * 0.8; 
+    drone.roll += (targetRoll - drone.roll) * 0.1; // Yumuşak geçiş
+
     drone.x += Math.cos(drone.angle) * drone.speed;
     drone.y += Math.sin(drone.angle) * drone.speed;
 
-    // --- YENİ YÜKSEKLİK MANTIĞI (SÜSPANSİYON) ---
+    // --- SÜSPANSİYON (Yumuşak Yükseklik) ---
     let mapIndex = ((Math.floor(drone.y) & (mapSize-1)) * mapSize + (Math.floor(drone.x) & (mapSize-1))) * 4;
     let groundHeight = heightData[mapIndex];
-    
-    // Hedef yükseklik: Zeminin 120 birim üstü
     let targetHeight = groundHeight + 120;
-    
-    // ANINDA ORAYA GİTME! Yavaş yavaş git (Smoothing)
-    // 0.05 değeri süspansiyon yumuşaklığıdır. (Küçükse daha yumuşak)
     drone.height += (targetHeight - drone.height) * 0.05;
 
-    // --- Çizim ve Kamera ---
+    // Kamera ve Rendering
     let renderX = drone.x;
     let renderY = drone.y;
     let renderHeight = drone.height;
 
+    // Kamera da yatıştan etkilenir (Hafif dönüyormuş hissi)
+    // Voxel motorunda gerçek roll zor olduğu için X kaydırmasıyla hile yapıyoruz
     if (cameraMode === 2) { 
         renderX -= Math.cos(drone.angle) * 300;
         renderY -= Math.sin(drone.angle) * 300;
@@ -219,11 +253,17 @@ function gameLoop() {
 
     if (cameraMode !== 1) drawDroneModel();
     if (cameraMode === 1) {
+        // Kokpit modunda yapay ufuk çizgisi
         ctx.strokeStyle = "rgba(0,255,0,0.5)"; ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(screenWidth/2 - 10, screenHeight/2); ctx.lineTo(screenWidth/2 + 10, screenHeight/2);
-        ctx.moveTo(screenWidth/2, screenHeight/2 - 10); ctx.lineTo(screenWidth/2, screenHeight/2 + 10);
+        // Çizgiyi de yatırıyoruz (Roll efekti)
+        ctx.save();
+        ctx.translate(screenWidth/2, screenHeight/2);
+        ctx.rotate(drone.roll);
+        ctx.moveTo(-20, 0); ctx.lineTo(20, 0);
+        ctx.moveTo(0, -10); ctx.lineTo(0, 10);
         ctx.stroke();
+        ctx.restore();
     }
     requestAnimationFrame(gameLoop);
 }
