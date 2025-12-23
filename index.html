@@ -1,70 +1,82 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Drone Voxel - Düzeltilmiş Versiyon</title>
+    <title>Drone Voxel - Hassas Kontrol</title>
     <meta charset="UTF-8">
     <style>
         body { margin: 0; overflow: hidden; background: #000; }
         canvas { width: 100%; height: 100vh; cursor: crosshair; }
+        #ui {
+            position: absolute; top: 10px; left: 10px;
+            color: #0f0; font-family: monospace; font-size: 16px; font-weight: bold;
+            text-shadow: 1px 1px 0 #000; pointer-events: none;
+        }
+        #center-marker {
+            position: absolute; top: 50%; left: 50%; width: 40px; height: 40px;
+            transform: translate(-50%, -50%);
+            border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%;
+            pointer-events: none;
+        }
         #loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #0f0; font-family: monospace; font-size: 24px; text-align: center;
-            background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px;
+            color: white; font-family: sans-serif; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px;
         }
     </style>
 </head>
 <body>
-    <div id="loading">DRONE SİSTEMİ BAŞLATILIYOR...<br><span style="font-size:16px; color:#aaa;">(Uydu verileri işleniyor)</span></div>
+    <div id="ui">
+        KAMERA: [P]<br>
+        GAZ: [W] veya [Sol Tık]<br>
+        YÖN: Mouse (Orta alan düz uçuş sağlar)
+    </div>
+    <div id="center-marker"></div>
+    <div id="loading">HARİTA YÜKLENİYOR...</div>
     <canvas id="screen"></canvas>
 
 <script>
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 
-// --- ÇÖZÜNÜRLÜK AYARI ---
-// Daha geniş ve net görmek için çözünürlüğü biraz artırdım
 const screenWidth = 400; 
 const screenHeight = 300;
 canvas.width = screenWidth;
 canvas.height = screenHeight;
 
-// -- DEĞİŞKENLER --
+// -- AYARLAR --
 let mapSize = 1024;
 let colorData = null;
 let heightData = null;
 let loaded = false;
+let cameraMode = 3; 
 
 let drone = {
     x: 512, y: 512, 
-    height: 150, // Yükseklik artırıldı (Daha ferah görüş)
+    height: 150, 
     angle: 0, 
-    horizon: 100, 
+    horizon: 120, // Varsayılan Ufuk Çizgisi
     speed: 0
 };
 
-// -- RESİMLERİ YÜKLEME --
+// -- RESİMLERİ YÜKLE --
 function loadMaps() {
     const imgColor = new Image();
     const imgHeight = new Image();
-    
     imgColor.crossOrigin = "Anonymous";
     imgHeight.crossOrigin = "Anonymous";
 
     let imagesLoaded = 0;
-
     function onImageLoad() {
         imagesLoaded++;
         if (imagesLoaded === 2) {
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = mapSize;
-            tempCanvas.height = mapSize;
-            const tempCtx = tempCanvas.getContext('2d');
+            const tCanvas = document.createElement('canvas');
+            tCanvas.width = mapSize; tCanvas.height = mapSize;
+            const tCtx = tCanvas.getContext('2d');
 
-            tempCtx.drawImage(imgColor, 0, 0);
-            colorData = tempCtx.getImageData(0, 0, mapSize, mapSize).data;
+            tCtx.drawImage(imgColor, 0, 0);
+            colorData = tCtx.getImageData(0, 0, mapSize, mapSize).data;
 
-            tempCtx.drawImage(imgHeight, 0, 0);
-            heightData = tempCtx.getImageData(0, 0, mapSize, mapSize).data;
+            tCtx.drawImage(imgHeight, 0, 0);
+            heightData = tCtx.getImageData(0, 0, mapSize, mapSize).data;
 
             loaded = true;
             document.getElementById('loading').style.display = 'none';
@@ -74,106 +86,74 @@ function loadMaps() {
 
     imgColor.src = 'color.png'; 
     imgHeight.src = 'height.png';
-    
     imgColor.onload = onImageLoad;
     imgHeight.onload = onImageLoad;
-    
-    imgColor.onerror = () => alert("HATA: Resimler GitHub'da bulunamadı!");
 }
 
 // -- KONTROLLER --
 let input = { forward: false };
 
-window.onmousemove = (e) => {
-    let xRatio = (e.clientX / window.innerWidth - 0.5); 
-    let yRatio = (e.clientY / window.innerHeight - 0.5);
+window.onkeydown = (e) => {
+    if(e.key === 'w' || e.key === 'W') input.forward = true;
+    if(e.key === 'p' || e.key === 'P') {
+        cameraMode++; 
+        if(cameraMode > 3) cameraMode = 1; 
+    }
+};
 
-    // Mouse Sağa/Sola -> Dönüş
+window.onkeyup = (e) => {
+    if(e.key === 'w' || e.key === 'W') input.forward = false;
+};
+
+// --- GELİŞMİŞ MOUSE KONTROLÜ ---
+window.onmousemove = (e) => {
+    // 1. Yatay Hareket (Dönüş) - Değişmedi
+    let xRatio = (e.clientX / window.innerWidth - 0.5); 
     drone.angle += xRatio * 0.1; 
-    
-    // Mouse Yukarı/Aşağı -> Ufuk Çizgisi (DÜZELTİLDİ)
-    // Eski kodda "-" vardı, "+" yaparak tersliği düzelttik.
-    // Ayrıca hassasiyeti ayarladık.
-    drone.horizon = 150 + (yRatio * 400);
+
+    // 2. Dikey Hareket (Bakış) - "ÖLÜ BÖLGE" Mantığı
+    let yRatio = (e.clientY / window.innerHeight - 0.5); // -0.5 ile +0.5 arası değer
+
+    // Eğer mouse ekranın tam ortasındaysa (yüzde 15'lik alan)
+    if (yRatio > -0.15 && yRatio < 0.15) {
+        // DÜZ GİT: Ufuk çizgisini sabitle
+        drone.horizon = 120; 
+        document.getElementById('center-marker').style.borderColor = "rgba(0, 255, 0, 0.5)"; // Yeşil ol
+    } else {
+        // HAREKET ET: Ama hassasiyeti düşürdük (Çarpanı azalttık)
+        // Eskiden 400 ile çarpıyorduk, şimdi 200 ile çarpıyoruz (Daha yavaş hareket)
+        drone.horizon = 120 + (yRatio * 200);
+        document.getElementById('center-marker').style.borderColor = "rgba(255, 255, 255, 0.3)"; // Beyaz ol
+    }
 };
 
 window.onmousedown = () => input.forward = true;
 window.onmouseup = () => input.forward = false;
-window.onkeydown = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = true; };
-window.onkeyup = (e) => { if(e.key === 'w' || e.key === 'W') input.forward = false; };
 
-// -- OYUN DÖNGÜSÜ --
-function gameLoop() {
-    if (!loaded) return;
+// -- DRONE MODELİ --
+function drawDroneModel() {
+    let cx = screenWidth / 2;
+    let cy = screenHeight - 60; 
+    if (cameraMode === 2) cy = screenHeight - 100;
 
-    if (input.forward) drone.speed = 3; 
-    else drone.speed *= 0.92;
-
-    drone.x += Math.cos(drone.angle) * drone.speed;
-    drone.y += Math.sin(drone.angle) * drone.speed;
-
-    let mapX = Math.floor(drone.x) & (mapSize - 1);
-    let mapY = Math.floor(drone.y) & (mapSize - 1);
-    let mapIndex = (mapY * mapSize + mapX) * 4;
-
-    // Otomatik Yükseklik: Yerden 120 birim yukarıda tut (Zoom hissini azaltır)
-    let groundHeight = heightData[mapIndex];
-    drone.height = groundHeight + 120; 
-
-    // -- RENDERING --
-    let imgData = ctx.createImageData(screenWidth, screenHeight);
-    let buf = new Uint32Array(imgData.data.buffer);
+    // Gövde
+    ctx.fillStyle = "#333"; ctx.fillRect(cx - 20, cy, 40, 10);
     
-    buf.fill(0xFFFFCC66); 
+    // Kollar
+    ctx.strokeStyle = "#555"; ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - 20, cy + 5); ctx.lineTo(cx - 40, cy - 10);
+    ctx.moveTo(cx + 20, cy + 5); ctx.lineTo(cx + 40, cy - 10); 
+    ctx.moveTo(cx - 20, cy + 5); ctx.lineTo(cx - 40, cy + 20); 
+    ctx.moveTo(cx + 20, cy + 5); ctx.lineTo(cx + 40, cy + 20); 
+    ctx.stroke();
 
-    let sinA = Math.sin(drone.angle);
-    let cosA = Math.cos(drone.angle);
+    // Pervaneler
+    ctx.fillStyle = "rgba(200, 255, 255, 0.5)";
+    ctx.beginPath(); ctx.arc(cx - 40, cy - 10, 14, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 40, cy - 10, 14, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx - 40, cy + 20, 14, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 40, cy + 20, 14, 0, Math.PI*2); ctx.fill();
     
-    // Görüş mesafesini artırdım
-    let viewDist = 1000; 
-
-    for (let i = 0; i < screenWidth; i++) {
-        let deltaX = (cosA * viewDist - sinA * (i - screenWidth/2)) / viewDist;
-        let deltaY = (sinA * viewDist + cosA * (i - screenWidth/2)) / viewDist;
-        
-        let posX = drone.x;
-        let posY = drone.y;
-        let maxH = screenHeight;
-
-        for (let z = 1; z < viewDist; z += 2) { // z adımını artırdım (Performans)
-            posX += deltaX * 2;
-            posY += deltaY * 2;
-            
-            let mX = Math.floor(posX) & (mapSize - 1);
-            let mY = Math.floor(posY) & (mapSize - 1);
-            let offset = (mY * mapSize + mX) * 4;
-            
-            let h = heightData[offset];
-            
-            // ZOOM DÜZELTMESİ BURADA:
-            // Çarpanı 240'tan 120'ye düşürdüm. 
-            // Bu, dağları daha basık ve uzak gösterir.
-            let hOnScreen = (drone.height - h) / z * 120 + drone.horizon;
-
-            if (hOnScreen < maxH) {
-                let r = colorData[offset];
-                let g = colorData[offset+1];
-                let b = colorData[offset+2];
-                let color = (255 << 24) | (b << 16) | (g << 8) | r;
-
-                for (let y = Math.max(0, hOnScreen|0); y < maxH; y++) {
-                    buf[y * screenWidth + i] = color;
-                }
-                maxH = hOnScreen;
-            }
-        }
-    }
-
-    ctx.putImageData(imgData, 0, 0);
-    requestAnimationFrame(gameLoop);
-}
-
-loadMaps();
-</script>
-</body>
-</html>
+    // Işık
+    ctx.fillStyle = input.forward ? "#0f0" : "#f
