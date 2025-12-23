@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Drone Voxel Uçuşu</title>
+    <meta charset="UTF-8">
+    <style>
+        body { margin: 0; overflow: hidden; background: #87CEEB; }
+        canvas { width: 100vw; height: 100vh; image-rendering: pixelated; }
+        #ui {
+            position: fixed; top: 10px; left: 10px; 
+            color: white; font-family: monospace; font-size: 16px;
+            background: rgba(0,0,0,0.5); padding: 10px; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="screen"></canvas>
+    <div id="ui">
+        DRONE KONTROL:<br>
+        W / S : Hızlan / Yavaşla<br>
+        A / D : Sağa / Sola Dön<br>
+        YUKARI / AŞAĞI OK : Yüksel / Alçal
+    </div>
+
+<script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+
+// --- 1. AYARLAR ---
+const screenWidth = 320; 
+const screenHeight = 200;
+canvas.width = screenWidth;
+canvas.height = screenHeight;
+
+// Harita boyutu (1024x1024)
+let mapSize = 1024;
+let heightMap = new Uint8Array(mapSize * mapSize);
+let colorMap = new Uint32Array(mapSize * mapSize);
+
+// --- 2. HARİTA OLUŞTURMA (Otomatik Dağlar ve Nehirler) ---
+// Bu kısım resim dosyası olmadığı için matematik ile harita yaratır.
+for(let i=0; i<mapSize*mapSize; i++) {
+    let x = i % mapSize;
+    let y = Math.floor(i / mapSize);
+    
+    // Yükseklik hesapla (Rastgele tepeler)
+    let h = Math.sin(x/50) * 10 + Math.cos(y/50) * 10 + Math.sin((x+y)/200)*30 + 50;
+    heightMap[i] = Math.max(0, Math.min(255, h));
+
+    // Renk hesapla (Yüksekliğe göre: Su, Çimen, Kar)
+    if(h < 40) colorMap[i] = 0xFFCC4400; // Mavi (Su) - Ters format (ABGR)
+    else if(h < 70) colorMap[i] = 0xFF228800; // Yeşil (Çimen)
+    else if(h < 90) colorMap[i] = 0xFF555555; // Gri (Kaya)
+    else colorMap[i] = 0xFFFFFFFF; // Beyaz (Kar)
+}
+
+// --- 3. DRONE AYARLARI ---
+let drone = {
+    x: 512, y: 512, 
+    height: 100, 
+    angle: 0, 
+    horizon: 100, 
+    speed: 0
+};
+
+// Klavye dinleyicisi
+let keys = {};
+window.onkeydown = (e) => keys[e.key.toLowerCase()] = true;
+window.onkeyup = (e) => keys[e.key.toLowerCase()] = false;
+window.onkeydown = (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if(e.key === "ArrowUp") keys["arrowup"] = true;
+    if(e.key === "ArrowDown") keys["arrowdown"] = true;
+};
+window.onkeyup = (e) => {
+    keys[e.key.toLowerCase()] = false;
+    if(e.key === "ArrowUp") keys["arrowup"] = false;
+    if(e.key === "ArrowDown") keys["arrowdown"] = false;
+};
+
+// --- 4. OYUN DÖNGÜSÜ ---
+function draw() {
+    // -- Hareket Mantığı --
+    if(keys['w']) drone.speed += 0.1;
+    if(keys['s']) drone.speed -= 0.1;
+    
+    // Sürtünme (Tuşu bırakınca yavaşlasın)
+    drone.speed *= 0.95; 
+
+    if(keys['a']) drone.angle -= 0.04;
+    if(keys['d']) drone.angle += 0.04;
+    
+    // Yükselme / Alçalma
+    if(keys['arrowup'] || keys['e']) drone.height += 2;
+    if(keys['arrowdown'] || keys['q']) drone.height -= 2;
+
+    // Koordinat güncelleme
+    drone.x += Math.cos(drone.angle) * drone.speed;
+    drone.y += Math.sin(drone.angle) * drone.speed;
+
+    // Hızlanınca burun eğme efekti
+    drone.horizon = 100 + (drone.speed * 5);
+
+    // -- Çizim Mantığı (Voxel Space) --
+    let imgData = ctx.createImageData(screenWidth, screenHeight);
+    let buf = new Uint32Array(imgData.data.buffer);
+    
+    // Gökyüzünü boya
+    buf.fill(0xFFFF9933); 
+
+    let sinA = Math.sin(drone.angle);
+    let cosA = Math.cos(drone.angle);
+    let viewDist = 600; // Görüş mesafesi
+
+    for (let i = 0; i < screenWidth; i++) {
+        // Kameradan çıkan ışınları hesapla
+        let deltaX = (cosA * viewDist - sinA * (i - screenWidth/2)) / viewDist;
+        let deltaY = (sinA * viewDist + cosA * (i - screenWidth/2)) / viewDist;
+        
+        let posX = drone.x;
+        let posY = drone.y;
+        let maxH = screenHeight;
+
+        for (let z = 1; z < viewDist; z += 2) {
+            posX += deltaX * 2;
+            posY += deltaY * 2;
+            
+            // Harita sınırlarını aşarsa başa sar (Sonsuz döngü)
+            let mapOff = ((Math.floor(posY) & (mapSize-1)) * mapSize) + (Math.floor(posX) & (mapSize-1));
+            
+            let h = heightMap[mapOff];
+            let hOnScreen = (drone.height - h) / z * 240 + drone.horizon;
+
+            if (hOnScreen < maxH) {
+                // Sütunu boya
+                let color = colorMap[mapOff];
+                for (let y = Math.max(0, hOnScreen|0); y < maxH; y++) {
+                    buf[y * screenWidth + i] = color;
+                }
+                maxH = hOnScreen;
+            }
+        }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    requestAnimationFrame(draw);
+}
+
+// Oyunu Başlat
+draw();
+</script>
+</body>
+</html>
